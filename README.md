@@ -15,7 +15,7 @@ Sublime Package. Format code upon save with a custom shell command.
     ]
 ```
 
-Note: Any `$1.extension` item in the command list is replaced by a temporary file used to format the current code.
+Note: Any `$1.extension` item in the command list is replaced by a temporary file containing the current code to format.
 
 ## Installation
 
