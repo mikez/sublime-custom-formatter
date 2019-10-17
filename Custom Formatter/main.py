@@ -67,7 +67,7 @@ def format_text(text, command):
     suffix = extract_extension(command)
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w+", delete=False, suffix=suffix
+            mode="w+", delete=False, suffix=suffix, encoding="utf-8"
         ) as file:
             file.write(text)
             file.close()
@@ -77,7 +77,7 @@ def format_text(text, command):
             run_shell_command(command)
     finally:
         if os.path.isfile(file.name):
-            with open(file.name) as file2:
+            with open(file.name, encoding="utf-8") as file2:
                 result = file2.read()
             os.remove(file.name)
 
