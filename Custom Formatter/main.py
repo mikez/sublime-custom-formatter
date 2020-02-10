@@ -37,6 +37,10 @@ logging.basicConfig(
 FILENAME_PATTERN = re.compile(r"\$1(\.\w+)$", flags=re.ASCII)
 
 
+class ShellNonZeroExitCode(Exception):
+    """Raised when a shell process returns a non-zero exit code."""
+
+
 class RunFormatEventListener(sublime_plugin.EventListener):
     @classmethod
     def on_pre_save(cls, view):
@@ -56,32 +60,73 @@ class RunCustomFormatterCommand(sublime_plugin.TextCommand):
         if formatter:
             region = sublime.Region(0, view.size())
             text = view.substr(region)
-
             # logging.info("Formatting with: " + formatter[0])
-            text = format_text(text, formatter)
+            try:
+                text = format_text(text, formatter)
+            except ShellNonZeroExitCode as error:
+                point_out_issue_to_user(error, view)
+            else:
+                view.replace(edit, region, text)
 
-            view.replace(edit, region, text)
+
+class GotoPositionCommand(sublime_plugin.TextCommand):
+    def run(self, edit, position):
+        row, column = position
+        point = self.view.text_point(row - 1, column)
+        self.view.sel().clear()
+        self.view.sel().add(sublime.Region(point))
+        self.view.show(point)
+
+
+# Actions
 
 
 def format_text(text, command):
     suffix = extract_extension(command)
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w+", delete=False, suffix=suffix, encoding="utf-8"
-        ) as file:
-            file.write(text)
-            file.close()
-            command = [
-                file.name if FILENAME_PATTERN.match(item) else item for item in command
-            ]
-            run_shell_command(command)
+        filepath = write_tempfile(text, suffix)
+        command = [
+            filepath if FILENAME_PATTERN.match(item) else item for item in command
+        ]
+        run_shell_command(command)
+        with open(filepath, encoding="utf-8") as file:
+            result = file.read()
     finally:
-        if os.path.isfile(file.name):
-            with open(file.name, encoding="utf-8") as file2:
-                result = file2.read()
-            os.remove(file.name)
+        if os.path.isfile(filepath):
+            os.remove(filepath)
 
     return result
+
+
+def point_out_issue_to_user(error, view):
+    error_message = error.args[0]
+    position = extract_position_with_issue(error_message)
+    if position:
+        view.run_command("goto_position", {"position": position})
+
+
+# Helpers
+
+
+def write_tempfile(text, suffix):
+    with tempfile.NamedTemporaryFile(
+        mode="w+", delete=False, suffix=suffix, encoding="utf-8"
+    ) as file:
+        filepath = file.name
+        file.write(text)
+    return filepath
+
+
+def extract_position_with_issue(error_message):
+    """Return (row, column) with issue from error message."""
+    # "line 10" type of errors.
+    match = re.search(rb"\bline (\d+)", error_message, flags=re.I)
+    if match:
+        return (int(match.group(1)), 0)
+    # "2:5" type of errors.
+    match = re.search(rb"\b(\d+):(\d+)\b", error_message, flags=re.I)
+    if match:
+        return (int(match.group(1)), int(match.group(2)))
 
 
 def extract_extension(command):
@@ -98,3 +143,4 @@ def run_shell_command(command):
     if process.returncode > 0:
         logging.info(command)
         logging.error(stderr)
+        raise ShellNonZeroExitCode(stderr)
