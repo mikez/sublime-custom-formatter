@@ -35,6 +35,10 @@ logging.basicConfig(
 )
 
 FILENAME_PATTERN = re.compile(r"\$1(\.\w+)$", flags=re.ASCII)
+ERROR_PATTERN_1 = re.compile(
+    rb"\bline (?P<line>\d+)(?:.*\bcolumn (?P<column>\d+))?", flags=re.I
+)
+ERROR_PATTERN_2 = re.compile(rb"\b(\d+):(\d+)\b", flags=re.I)
 
 
 class ShellNonZeroExitCode(Exception):
@@ -72,7 +76,7 @@ class RunCustomFormatterCommand(sublime_plugin.TextCommand):
 class GotoPositionCommand(sublime_plugin.TextCommand):
     def run(self, edit, position):
         row, column = position
-        point = self.view.text_point(row - 1, column)
+        point = self.view.text_point(row - 1, column - 1)
         self.view.sel().clear()
         self.view.sel().add(sublime.Region(point))
         self.view.show(point)
@@ -119,12 +123,13 @@ def write_tempfile(text, suffix):
 
 def extract_position_with_issue(error_message):
     """Return (row, column) with issue from error message."""
-    # "line 10" type of errors.
-    match = re.search(rb"\bline (\d+)", error_message, flags=re.I)
+    # "line 10, column 5" type of errors.
+    match = ERROR_PATTERN_1.search(error_message)
     if match:
-        return (int(match.group(1)), 0)
-    # "2:5" type of errors.
-    match = re.search(rb"\b(\d+):(\d+)\b", error_message, flags=re.I)
+        position = match.groupdict()
+        return (int(position.get("line")), int(position.get("column") or 0))
+    # "10:5" type of errors.
+    match = ERROR_PATTERN_2.search(error_message)
     if match:
         return (int(match.group(1)), int(match.group(2)))
 
