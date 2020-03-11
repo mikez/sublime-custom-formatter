@@ -25,6 +25,7 @@ import os
 import re
 from subprocess import Popen, PIPE
 import tempfile
+import time
 
 import sublime
 import sublime_plugin
@@ -60,6 +61,7 @@ class RunFormatEventListener(sublime_plugin.EventListener):
 class RunCustomFormatterCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         view = self.view
+        current_visible_region = view.visible_region()
         formatter = view.settings().get("formatter")
         if formatter:
             region = sublime.Region(0, view.size())
@@ -71,6 +73,8 @@ class RunCustomFormatterCommand(sublime_plugin.TextCommand):
                 point_out_issue_to_user(error, view)
             else:
                 view.replace(edit, region, text)
+                # after saving, unwanted scrolling happens sometimes
+                scroll_all_the_way_left(current_visible_region, view)
 
 
 class GotoPositionCommand(sublime_plugin.TextCommand):
@@ -107,6 +111,14 @@ def point_out_issue_to_user(error, view):
     position = extract_position_with_issue(error_message)
     if position:
         view.run_command("goto_position", {"position": position})
+
+
+def scroll_all_the_way_left(visible_region, view):
+    top, _ = view.rowcol(visible_region.a)
+    bottom, _ = view.rowcol(visible_region.b)
+    middle = (top + bottom) // 2
+    point = view.text_point(middle, 0)
+    view.show(point)
 
 
 # Helpers
