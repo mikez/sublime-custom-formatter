@@ -23,8 +23,9 @@ current code to format.
 import logging
 import os
 import re
-from subprocess import Popen, PIPE
+from subprocess import PIPE, Popen
 import tempfile
+import time
 
 import sublime
 import sublime_plugin
@@ -48,12 +49,13 @@ class ShellNonZeroExitCode(Exception):
 class RunFormatEventListener(sublime_plugin.EventListener):
     @classmethod
     def on_pre_save(cls, view):
-        # logging.info('Hello Pre Save Async')
+        first = time.perf_counter()
         view.run_command("run_custom_formatter")
+        second = time.perf_counter()
+        print("[Custom Formatter]", round(second - first, 6), "seconds runtime.")
 
     @classmethod
     def on_post_save_async(cls, view):
-        # logging.info('Hello Post Save Async')
         pass
 
 
@@ -61,25 +63,30 @@ class RunCustomFormatterCommand(sublime_plugin.TextCommand):
     def run(self, edit):
         view = self.view
         formatter = view.settings().get("formatter")
-        if formatter:
-            region = sublime.Region(0, view.size())
-            text = view.substr(region)
-            # logging.info("Formatting with: " + formatter[0])
-            try:
-                text = format_text(text, formatter)
-            except ShellNonZeroExitCode as error:
-                point_out_issue_to_user(error, view)
-            else:
-                view.replace(edit, region, text)
+        if not formatter:
+            return
+
+        region = sublime.Region(0, view.size())
+        text = view.substr(region)
+        # logging.info("Formatting with: " + formatter[0])
+        try:
+            text = format_text(text, formatter)
+        except ShellNonZeroExitCode as error:
+            point_out_issue_to_user(error, view)
+        else:
+            position = save_cursor_and_viewport_position(view)
+            view.replace(edit, region, text)
+            set_cursor_and_viewport_position(position, view)
 
 
 class GotoPositionCommand(sublime_plugin.TextCommand):
     def run(self, edit, position):
+        """Note: position = (row, column) are 0-based in the Sublime API."""
         row, column = position
-        point = self.view.text_point(row - 1, column - 1)
+        point = self.view.text_point(row, column)
         self.view.sel().clear()
         self.view.sel().add(sublime.Region(point))
-        self.view.show(point)
+        self.view.show(point, keep_to_left=True, animate=False)
 
 
 # Actions
@@ -92,9 +99,11 @@ def format_text(text, command):
         command = [
             filepath if FILENAME_PATTERN.match(item) else item for item in command
         ]
+        # logging.info(command)
         run_shell_command(command)
         with open(filepath, encoding="utf-8") as file:
             result = file.read()
+
     finally:
         if os.path.isfile(filepath):
             os.remove(filepath)
@@ -105,8 +114,10 @@ def format_text(text, command):
 def point_out_issue_to_user(error, view):
     error_message = error.args[0]
     position = extract_position_with_issue(error_message)
-    if position:
-        view.run_command("goto_position", {"position": position})
+    if not position:
+        return
+    position = position[0] - 1, position[1] - 1
+    view.run_command("goto_position", {"position": position})
 
 
 # Helpers
@@ -127,7 +138,7 @@ def extract_position_with_issue(error_message):
     match = ERROR_PATTERN_1.search(error_message)
     if match:
         position = match.groupdict()
-        return (int(position.get("line")), int(position.get("column") or 0))
+        return (int(position.get("line")), int(position.get("column") or 1))
     # "10:5" type of errors.
     match = ERROR_PATTERN_2.search(error_message)
     if match:
@@ -140,6 +151,22 @@ def extract_extension(command):
         if match:
             return match.group(1)
     return ""
+
+
+def save_cursor_and_viewport_position(view):
+    cursor_position = view.rowcol(view.sel()[0].a)
+    viewport_position = view.viewport_position()
+    return cursor_position, viewport_position
+
+
+def set_cursor_and_viewport_position(position, view):
+    cursor_position, viewport_position = position
+    # set cursor
+    view.run_command("goto_position", {"position": cursor_position})
+    # set viewport
+    # The next command is needed for the viewport change to work.
+    view.set_viewport_position((0.0, 0.0))
+    view.set_viewport_position(viewport_position)
 
 
 def run_shell_command(command):
